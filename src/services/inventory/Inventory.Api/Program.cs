@@ -4,15 +4,92 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Inventory.Api.Data;       // <- seu DbContext
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using Inventory.Api.Models;
+
 
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ==== JWT (Inventory) ====
+var jwtSection = builder.Configuration.GetSection("Jwt");
+var jwtIssuer = jwtSection["Issuer"]!;
+var jwtAudience = jwtSection["Audience"]!;
+var jwtKey = jwtSection["Key"]!;
+var jwtKeyBytes = Encoding.UTF8.GetBytes(jwtKey);
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(o =>
+    {
+        o.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(jwtKeyBytes),
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateIssuerSigningKey = true,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero
+        };
+    });
+
+builder.Services.AddAuthorization();
+
 
 // (config do EF/serviços aqui)
 
 var app = builder.Build();
 
-// (EnsureCreated e seus endpoints aqui)
+builder.Services.AddDbContext<InventoryDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("Default")));
+
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+//minimal API 
+
+app.MapGet("/api/products", async (InventoryDbContext db) =>
+{
+    return await db.Products.ToListAsync();
+}).RequireAuthorization();
+
+app.MapPost("/api/products", async (InventoryDbContext db, Product product) =>
+{
+    db.Products.Add(product);
+    await db.SaveChangesAsync();
+    return Results.Created($"/api/products/{product.Sku}", product);
+}).RequireAuthorization();
+
+app.MapGet("/api/products/{sku}", async (InventoryDbContext db, string sku) =>
+{
+    var product = await db.Products.FirstOrDefaultAsync(p => p.Sku == sku);
+    return product is not null ? Results.Ok(product) : Results.NotFound();
+}).RequireAuthorization();
+
+app.MapPatch("/api/products/{sku}", async (InventoryDbContext db, string sku, Product updatedProduct) =>
+{
+    var product = await db.Products.FirstOrDefaultAsync(p => p.Sku == sku);
+    if (product is null) return Results.NotFound();
+
+    product.Quantity = updatedProduct.Quantity;
+    await db.SaveChangesAsync();
+    return Results.Ok(product);
+}).RequireAuthorization();
+
+app.MapPost("/api/inventory/validate", async (InventoryDbContext db, Sale sale) =>
+{
+    var product = await db.Products.FirstOrDefaultAsync(p => p.Sku == sale.Product);
+    return product is not null && product.Quantity >= sale.Quantity
+        ? Results.Ok(true)
+        : Results.Ok(false);
+}).RequireAuthorization();
+
 
 // ===== CONSUMER RABBITMQ (6.8.1 síncrono) =====
 var factory = new ConnectionFactory { HostName = "localhost", UserName = "guest", Password = "guest" };
