@@ -10,7 +10,6 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
 
-
 // ===== App setup =====
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,7 +20,7 @@ var keyBytes = Encoding.UTF8.GetBytes(jwt["Key"]!);
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
-        o.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        o.TokenValidationParameters = new TokenValidationParameters
         {
             ValidIssuer = jwt["Issuer"],
             ValidAudience = jwt["Audience"],
@@ -36,6 +35,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 // HttpClient -> Inventory
 builder.Services.AddHttpClient("Inventory", c =>
@@ -45,14 +46,23 @@ builder.Services.AddHttpClient("Inventory", c =>
 });
 
 var app = builder.Build();
-app.MapGet("/", () => "Sales API OK");
 
-// ===== RabbitMQ (v6.8.1 – API síncrona) =====
+app.UseSwagger();
+app.UseSwaggerUI();
+
+// IMPORTANTE: autenticação/autorização ANTES dos endpoints protegidos
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapGet("/", () => "Sales API OK").AllowAnonymous();
+
+// Health simples (fora de qualquer endpoint)
+app.MapGet("/_health", () => Results.Ok("ok")).AllowAnonymous();
+
+// ===== RabbitMQ (v6.8.1) =====
 var rmqFactory = new ConnectionFactory { HostName = "localhost" };
 var rmqConnection = rmqFactory.CreateConnection();
 var rmqChannel = rmqConnection.CreateModel();
-
-// Exchange fanout para eventos de vendas
 rmqChannel.ExchangeDeclare(exchange: "ecommerce.sales", type: ExchangeType.Fanout, durable: true);
 
 // ===== Endpoints =====
@@ -76,7 +86,7 @@ app.MapPost("/api/orders", async (OrderRequest order, IHttpClientFactory http) =
     if (result is null || !result.IsAvailable)
         return Results.BadRequest(new { message = "Unavailable", result?.Unavailable });
 
-    // 2) Monta evento de confirmação e publica no RabbitMQ
+    // 2) Publica evento no RabbitMQ
     var orderNumber = $"ORD-{DateTime.UtcNow:yyyyMMddHHmmss}";
     var evt = new OrderConfirmed
     {
@@ -88,7 +98,6 @@ app.MapPost("/api/orders", async (OrderRequest order, IHttpClientFactory http) =
 
     var json = JsonSerializer.Serialize(evt);
     var body = Encoding.UTF8.GetBytes(json);
-
     var props = rmqChannel.CreateBasicProperties();
     props.Persistent = true;
 
@@ -101,7 +110,8 @@ app.MapPost("/api/orders", async (OrderRequest order, IHttpClientFactory http) =
 
     // 3) Retorna sucesso
     return Results.Created($"/api/orders/{orderNumber}", new { orderNumber, status = "Confirmed" });
-});
+})
+.RequireAuthorization(); // protege o endpoint
 
 // Encerramento gracioso
 AppDomain.CurrentDomain.ProcessExit += (_, __) =>

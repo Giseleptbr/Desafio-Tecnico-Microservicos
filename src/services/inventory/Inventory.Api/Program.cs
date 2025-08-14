@@ -44,12 +44,18 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
 // ================== BUILD ==================
 var app = builder.Build();
 
 // ================== MIDDLEWARES ==================
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseSwagger();
+app.UseSwaggerUI();
 
 // ================== ENDPOINTS (protegidos) ==================
 app.MapGet("/api/products", async (InventoryDbContext db) =>
@@ -163,6 +169,9 @@ AppDomain.CurrentDomain.ProcessExit += (_, __) =>
     try { channel?.Close(); } catch { }
     try { connection?.Close(); } catch { }
 };
+
+// health
+app.MapGet("/_health", () => Results.Ok("ok")).AllowAnonymous();
 
 // ================== RUN ==================
 app.Run();
