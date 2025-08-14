@@ -60,10 +60,24 @@ app.MapGet("/", () => "Sales API OK").AllowAnonymous();
 app.MapGet("/_health", () => Results.Ok("ok")).AllowAnonymous();
 
 // ===== RabbitMQ (v6.8.1) =====
-var rmqFactory = new ConnectionFactory { HostName = "localhost" };
+// ===== RabbitMQ (v6.8.1) =====
+var rmqHost = builder.Configuration["RabbitMQ:HostName"] ?? "localhost";
+var rmqUser = builder.Configuration["RabbitMQ:UserName"] ?? "guest";
+var rmqPass = builder.Configuration["RabbitMQ:Password"] ?? "guest";
+
+var rmqFactory = new ConnectionFactory
+{
+    HostName = rmqHost,
+    UserName = rmqUser,
+    Password = rmqPass
+};
+
 var rmqConnection = rmqFactory.CreateConnection();
-var rmqChannel = rmqConnection.CreateModel();
-rmqChannel.ExchangeDeclare(exchange: "ecommerce.sales", type: ExchangeType.Fanout, durable: true);
+var rmqChannel    = rmqConnection.CreateModel();
+rmqChannel.ExchangeDeclare(exchange: "ecommerce.sales",
+                            type: ExchangeType.Fanout,
+                            durable: true);
+
 
 // ===== Endpoints =====
 app.MapPost("/api/orders", async (OrderRequest order, IHttpClientFactory http) =>

@@ -1,45 +1,64 @@
-version: "3.9"
 services:
-  sql-inventory:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    environment:
-      - SA_PASSWORD=Your_strong_Passw0rd
-      - ACCEPT_EULA=Y
-    ports: [ "14331:1433" ]
-
-  sql-sales:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    environment:
-      - SA_PASSWORD=Your_strong_Passw0rd
-      - ACCEPT_EULA=Y
-    ports: [ "14332:1433" ]
-
   rabbitmq:
     image: rabbitmq:3-management
-    ports: [ "5672:5672", "15672:15672" ]
+    ports:
+      - "5672:5672"
+      - "15672:15672"
 
   inventory-api:
     build: ../src/services/inventory/Inventory.Api
     environment:
-      - ConnectionStrings__Default=Server=sql-inventory;Database=InventoryDb;User Id=sa;Password=Your_strong_Passw0rd;TrustServerCertificate=true
-      - RabbitMQ__HostName=rabbitmq
       - ASPNETCORE_URLS=http://+:8080
-    depends_on: [ sql-inventory, rabbitmq ]
-    ports: [ "8081:8080" ]
+      # SQLite: arquivo dentro do container em /data
+      - ConnectionStrings__Default=Data Source=/data/inventory.db
+      # RabbitMQ para rodar em docker
+      - RabbitMQ__HostName=rabbitmq
+      - RabbitMQ__UserName=guest
+      - RabbitMQ__Password=guest
+      # JWT
+      - Jwt__Issuer=Desafio.Auth
+      - Jwt__Audience=Desafio.Client
+      - Jwt__Key=dev-super-secret-key-CHANGE-ME-32CHARS+
+    volumes:
+      - inventory_data:/data
+    depends_on:
+      - rabbitmq
+    ports:
+      - "8081:8080"
 
   sales-api:
     build: ../src/services/sales/Sales.Api
     environment:
-      - ConnectionStrings__Default=Server=sql-sales;Database=SalesDb;User Id=sa;Password=Your_strong_Passw0rd;TrustServerCertificate=true
-      - RabbitMQ__HostName=rabbitmq
-      - Inventory__BaseUrl=http://inventory-api:8080
       - ASPNETCORE_URLS=http://+:8080
-    depends_on: [ sql-sales, rabbitmq, inventory-api ]
-    ports: [ "8082:8080" ]
+      # SQLite: arquivo dentro do container em /data
+      - ConnectionStrings__Default=Data Source=/data/sales.db
+      # RabbitMQ e URL interna do Inventory
+      - RabbitMQ__HostName=rabbitmq
+      - RabbitMQ__UserName=guest
+      - RabbitMQ__Password=guest
+      - Inventory__BaseUrl=http://inventory-api:8080
+      # JWT
+      - Jwt__Issuer=Desafio.Auth
+      - Jwt__Audience=Desafio.Client
+      - Jwt__Key=dev-super-secret-key-CHANGE-ME-32CHARS+
+    volumes:
+      - sales_data:/data
+    depends_on:
+      - rabbitmq
+      - inventory-api
+    ports:
+      - "8082:8080"
 
   gateway:
     build: ../src/gateway/ApiGateway
-    depends_on: [ inventory-api, sales-api ]
     environment:
       - ASPNETCORE_URLS=http://+:8080
-    ports: [ "8080:8080" ]
+    depends_on:
+      - inventory-api
+      - sales-api
+    ports:
+      - "8080:8080"
+
+volumes:
+  inventory_data:
+  sales_data:
